@@ -248,7 +248,9 @@
     const q = $('#chSearch').value.trim().toLowerCase();
     const all = C.decodeImage(bytesOf(item));
     const list = q ? all.filter((c) => (c.name.toLowerCase().includes(q) || C.mhz(c.rx).includes(q) || String(c.n) === q)) : all;
-    $('#chCount').textContent = 'Заповнено каналів: ' + all.length + (q ? ', знайдено: ' + list.length : '') + (item.model ? '. Модель: ' + item.model : '');
+    const st = C.readSettings(bytesOf(item));
+    $('#chCount').textContent = 'Заповнено каналів: ' + all.length + (q ? ', знайдено: ' + list.length : '') + (item.model ? '. Модель: ' + item.model : '') +
+      '. Тривога: ' + st.alarmModeText + '. Бокова кнопка: ' + st.sk1Text + '.';
     box.innerHTML = list.length ? '<ul class="chs">' + list.map((c) => channelRow(c)).join('') + '</ul>' : '<p class="empty">Нічого не знайдено.</p>';
   }
 
@@ -283,8 +285,9 @@
     const list = loadImages();
     const box = $('#saved');
     box.innerHTML = list.length ? list.map((x) =>
-      '<li><span><b>' + esc(x.label) + '</b><br><small>' + fmtDate(x.date) + (x.source === 'file' ? ', з файлу' : '') + '</small></span>' +
-      '<span class="row-btns"><button class="ghost" data-rename="' + x.id + '">Перейменувати</button>' +
+      '<li><span><b>' + esc(x.label) + '</b><br><small>' + fmtDate(x.date) + ({ file: ', з файлу', backup: ', резервна копія', written: ', те, що записано' }[x.source] || '') + '</small></span>' +
+      '<span class="row-btns">' + (link.connected ? '<button class="ghost" data-restore="' + x.id + '">Записати в рацію</button>' : '') +
+      '<button class="ghost" data-rename="' + x.id + '">Перейменувати</button>' +
       '<button class="ghost danger" data-del="' + x.id + '">Видалити</button></span></li>').join('')
       : '<li class="empty">Поки що нічого не збережено.</li>';
   }
@@ -294,8 +297,180 @@
     $$('.panel').forEach((p) => { p.hidden = p.id !== 'p-' + name; });
     if (name === 'channels') renderChannels();
     if (name === 'compare') renderCompare();
+    if (name === 'plan') renderPlan();
     if (name === 'radio') { refreshRadioTab(); renderSaved(); }
     window.scrollTo(0, 0);
+  }
+
+
+  // ---------------- Набір каналів для обох рацій ----------------
+  const PLAN_KEY = 'mini5.plan.v1';
+  const DEFAULT_PLAN = {
+    start: 1,
+    alarmToAir: true,
+    rows: [
+      { name: 'NASH 1', freq: '446.05625', tone: '136.5', power: 'Low', narrow: true, rxOnly: false },
+      { name: 'NASH 2', freq: '446.14375', tone: '136.5', power: 'Low', narrow: true, rxOnly: false },
+      { name: 'PMR 1', freq: '446.00625', tone: '', power: 'Low', narrow: true, rxOnly: false },
+      { name: 'PMR 8', freq: '446.09375', tone: '', power: 'Low', narrow: true, rxOnly: false }
+    ]
+  };
+  function loadPlan() {
+    try { return JSON.parse(localStorage.getItem(PLAN_KEY)) || JSON.parse(JSON.stringify(DEFAULT_PLAN)); }
+    catch (e) { return JSON.parse(JSON.stringify(DEFAULT_PLAN)); }
+  }
+  const savePlan = (p) => { try { localStorage.setItem(PLAN_KEY, JSON.stringify(p)); } catch (e) { /* ignore */ } };
+
+  const CTCSS = [67.0, 69.3, 71.9, 74.4, 77.0, 79.7, 82.5, 85.4, 88.5, 91.5, 94.8, 97.4, 100.0, 103.5, 107.2, 110.9,
+    114.8, 118.8, 123.0, 127.3, 131.8, 136.5, 141.3, 146.2, 151.4, 156.7, 159.8, 162.2, 165.5, 167.9, 171.3, 173.8,
+    177.3, 179.9, 183.5, 186.2, 189.9, 192.8, 196.6, 199.5, 203.5, 206.5, 210.7, 218.1, 225.7, 229.1, 233.6, 241.8,
+    250.3, 254.1];
+  function toneOptions(cur) {
+    let h = '<option value="">без тону</option><optgroup label="CTCSS, Гц">';
+    for (const t of CTCSS) { const v = t.toFixed(1); h += '<option value="' + v + '"' + (v === cur ? ' selected' : '') + '>' + v + '</option>'; }
+    h += '</optgroup><optgroup label="DCS">';
+    for (const d of C.DCS) {
+      for (const p of ['N', 'I']) {
+        const v = 'D' + String(d).padStart(3, '0') + p;
+        if (p === 'I' && v !== cur) continue;
+        h += '<option value="' + v + '"' + (v === cur ? ' selected' : '') + '>' + v + '</option>';
+      }
+    }
+    return h + '</optgroup>';
+  }
+
+  const TX_OK = [[144e6, 148e6], [420e6, 450e6]];
+  const RX_OK = [[108e6, 136e6], [136e6, 174e6], [350e6, 390e6], [400e6, 520e6]];
+  const inR = (f, rs) => rs.some(([a, b]) => f >= a && f <= b);
+
+  // Перевіряє набір і повертає канали у форматі ядра
+  function planChannels(plan) {
+    const errs = [];
+    const start = parseInt(plan.start, 10);
+    if (!(start >= 1 && start + plan.rows.length - 1 <= 999)) errs.push('Номер першого каналу має бути від 1 до ' + (1000 - plan.rows.length) + '.');
+    const list = plan.rows.map((r, i) => {
+      const where = 'Канал ' + (i + 1) + ': ';
+      const name = String(r.name || '').trim();
+      if (!/^[\x20-\x7e]{0,12}$/.test(name)) errs.push(where + 'назва лише латиницею й цифрами, до 12 знаків (рація не показує кирилицю).');
+      const f = Math.round(parseFloat(String(r.freq).replace(',', '.')) * 1e6);
+      if (!(f > 0)) { errs.push(where + 'вкажіть частоту в МГц, наприклад 446.05625.'); return null; }
+      if (!inR(f, RX_OK)) errs.push(where + C.mhz(f) + ' МГц рація не приймає.');
+      const air = f >= 108e6 && f < 136e6;
+      const rxOnly = r.rxOnly || air;
+      if (!rxOnly && !inR(f, TX_OK)) errs.push(where + 'на ' + C.mhz(f) + ' МГц рація не передає (лише 144–148 і 420–450). Позначте «лише прийом».');
+      let tone = null;
+      try { tone = C.parseTone(r.tone); } catch (e) { errs.push(where + e.message); }
+      return {
+        n: start + i, name, rx: f, tx: rxOnly ? null : f, txTone: rxOnly ? null : tone, rxTone: tone,
+        power: r.power === 'High' ? 'High' : 'Low', mode: air ? 'AM' : (r.narrow ? 'NFM' : 'FM'), scan: true
+      };
+    });
+    return { errs, list };
+  }
+
+  function applyPlan(img, plan) {
+    const { errs, list } = planChannels(plan);
+    if (errs.length) throw new Error(errs.join('\n'));
+    const out = img.slice();
+    for (const ch of list) C.encodeChannel(out, ch.n, ch);
+    if (plan.alarmToAir) { out[C.SET.alarmMode] = 1; out[C.SET.alarmTone] = 1; }
+    return out;
+  }
+
+  function renderPlan() {
+    const plan = loadPlan();
+    $('#planStart').value = plan.start;
+    $('#planAlarm').checked = !!plan.alarmToAir;
+    $('#planRows').innerHTML = plan.rows.map((r, i) =>
+      '<div class="prow" data-i="' + i + '">' +
+      '<div class="pnum">' + String(parseInt(plan.start, 10) + i).padStart(3, '0') + '</div>' +
+      '<div class="pfields">' +
+      '<div class="pgrid"><label>Назва<input data-k="name" value="' + esc(r.name) + '" maxlength="12" autocapitalize="characters" autocomplete="off"></label>' +
+      '<label>Частота, МГц<input data-k="freq" value="' + esc(r.freq) + '" inputmode="decimal" autocomplete="off"></label></div>' +
+      '<div class="pgrid"><label>Тон<select data-k="tone">' + toneOptions(r.tone) + '</select></label>' +
+      '<label>Потужність<select data-k="power"><option value="Low"' + (r.power !== 'High' ? ' selected' : '') + '>низька</option><option value="High"' + (r.power === 'High' ? ' selected' : '') + '>висока</option></select></label></div>' +
+      '<div class="pgrid"><label>Смуга<select data-k="narrow"><option value="1"' + (r.narrow ? ' selected' : '') + '>вузька</option><option value="0"' + (!r.narrow ? ' selected' : '') + '>широка</option></select></label>' +
+      '<label class="chk"><input type="checkbox" data-k="rxOnly"' + (r.rxOnly ? ' checked' : '') + '> лише прийом</label></div>' +
+      '<button class="ghost danger" data-del-row="' + i + '">Прибрати канал</button>' +
+      '</div></div>').join('');
+    const { errs } = planChannels(plan);
+    $('#planErr').hidden = !errs.length;
+    $('#planErr').textContent = errs.join('\n');
+    refreshPlanWrite();
+  }
+
+  function refreshPlanWrite() {
+    const c = link.connected;
+    $('#planConn').textContent = c ? 'Підключено: ' + (link.device.name || 'рація') : 'Рацію не підключено';
+    $('#planConnect').hidden = c;
+    $('#btnWritePlan').disabled = !c || busy || !$('#planErr').hidden;
+  }
+
+  function planFromForm() {
+    const plan = loadPlan();
+    plan.start = parseInt($('#planStart').value, 10) || 1;
+    plan.alarmToAir = $('#planAlarm').checked;
+    $$('.prow').forEach((row) => {
+      const r = plan.rows[+row.dataset.i];
+      $$('[data-k]', row).forEach((el) => {
+        const k = el.dataset.k;
+        if (k === 'rxOnly') r[k] = el.checked;
+        else if (k === 'narrow') r[k] = el.value === '1';
+        else if (k === 'name') r[k] = el.value.toUpperCase();
+        else r[k] = el.value;
+      });
+    });
+    return plan;
+  }
+
+  // ---------------- Запис у рацію ----------------
+  let retryBase = null; // резервна копія, якщо рація не прийняла запис одразу після зчитування
+
+  async function doWrite(build, what) {
+    if (busy || !link.connected) return;
+    const radioName = ($('#label').value.trim() || 'Рація');
+    busy = true; refreshRadioTab(); refreshPlanWrite();
+    const bar = $('#wbar'), pct = $('#wpct');
+    $('#wprogress').hidden = false; bar.style.width = '0%';
+    let phase = '';
+    const prog = (from, span) => (done, total) => {
+      const p = Math.round(from + done / total * span);
+      bar.style.width = p + '%'; pct.textContent = phase + ': ' + p + '%';
+      $('#lcdB').textContent = phase + ', ' + done + ' з ' + total;
+    };
+    const devId = link.device && link.device.id;
+    let wrote = false;
+    try {
+      let base;
+      await C.enterProgramMode(link, log);
+      if (retryBase && retryBase.devId === devId && Date.now() - retryBase.t < 15 * 60000) {
+        base = retryBase.img;
+        log('Використовую резервну копію, зроблену ' + new Date(retryBase.t).toLocaleTimeString('uk-UA'));
+      } else {
+        phase = 'Резервна копія'; setDisplay('Зберігаю поточні налаштування…', '', 'busy');
+        base = await C.readBlocks(link, { log, progress: prog(0, 45) });
+        addImage(base, { label: radioName + ': до запису', source: 'backup' });
+        retryBase = { img: base, devId, t: Date.now() };
+      }
+      const next = build(base);
+      phase = 'Запис'; setDisplay('Записую ' + what + '…', 'Не вимикайте рацію', 'tx');
+      await C.writeBlocks(link, next, { log, progress: prog(45, 55) });
+      wrote = true;
+      retryBase = null;
+      addImage(next, { label: radioName + ': після запису', source: 'written' });
+      setDisplay('Записано: ' + what, 'Рація перезапускається', 'rx');
+      log('Готово. Рація перезапуститься й від\'єднається.');
+      alert('Готово. Рація перезапускається.\n\nЩоб записати другу рацію: увімкніть на ній Wireless CPS, підключіть і натисніть «Записати» ще раз.');
+    } catch (e) {
+      log('Помилка запису: ' + errText(e));
+      setDisplay('Запис не вдався', 'Деталі в журналі', 'tx');
+      alert(errText(e) + (retryBase ? '\n\nРезервну копію збережено. Вимкніть і ввімкніть рацію, знову MENU → 4 → ON, підключіть її й натисніть «Записати» ще раз: програма запише без повторного зчитування.' : ''));
+    } finally {
+      busy = false;
+      $('#wprogress').hidden = true;
+      if (wrote) setTimeout(() => link.disconnect(), 500);
+      renderSaved(); refreshRadioTab(); refreshPlanWrite();
+    }
   }
 
   // ---------------- Дії ----------------
@@ -303,7 +478,7 @@
     if (!navigator.bluetooth) return;
     try {
       setDisplay('Пошук рації…', 'Оберіть «walkie-talkie» у списку', 'busy');
-      link.onDisconnect = () => refreshRadioTab();
+      link.onDisconnect = () => { refreshRadioTab(); refreshPlanWrite(); renderSaved(); };
       await link.connect(showAll);
     } catch (e) {
       if (e && e.name === 'NotFoundError') log('Пошук скасовано або рацію не знайдено');
@@ -313,7 +488,7 @@
         alert('Не вдалося підключитися: ' + t + '\n\nСпробуйте посилання «Показати всі пристрої».');
       }
     }
-    refreshRadioTab();
+    refreshRadioTab(); refreshPlanWrite(); renderSaved();
   }
 
   async function doRead() {
@@ -400,7 +575,14 @@
     $('#fileIn').addEventListener('change', (e) => { if (e.target.files[0]) doImport(e.target.files[0]); e.target.value = ''; });
 
     $('#saved').addEventListener('click', (e) => {
-      const del = e.target.dataset.del, ren = e.target.dataset.rename;
+      const del = e.target.dataset.del, ren = e.target.dataset.rename, rest = e.target.dataset.restore;
+      if (rest) {
+        const it = getImage(rest);
+        if (it && confirm('Записати в підключену рацію повну копію «' + it.label + '»?\n\nУСІ канали й налаштування рації буде замінено цією копією. Перед записом програма збереже резервну копію поточного стану.')) {
+          const img = bytesOf(it);
+          doWrite(() => img, 'копію «' + it.label + '»');
+        }
+      }
       if (del) {
         const it = getImage(del);
         if (it && confirm('Видалити зчитування «' + it.label + '»? Це стосується лише копії в програмі, рація не зміниться.')) {
@@ -414,6 +596,27 @@
       }
     });
 
+    $('#planRows').addEventListener('change', () => { savePlan(planFromForm()); renderPlan(); });
+    $('#planRows').addEventListener('click', (e) => {
+      const i = e.target.dataset.delRow;
+      if (i === undefined) return;
+      const p = planFromForm(); p.rows.splice(+i, 1); savePlan(p); renderPlan();
+    });
+    $('#planStart').addEventListener('change', () => { savePlan(planFromForm()); renderPlan(); });
+    $('#planAlarm').addEventListener('change', () => { savePlan(planFromForm()); renderPlan(); });
+    $('#planAdd').addEventListener('click', () => {
+      const p = planFromForm(); p.rows.push({ name: '', freq: '', tone: '', power: 'Low', narrow: true, rxOnly: false }); savePlan(p); renderPlan();
+    });
+    $('#planReset').addEventListener('click', () => { if (confirm('Повернути набір до початкового прикладу?')) { savePlan(JSON.parse(JSON.stringify(DEFAULT_PLAN))); renderPlan(); } });
+    $('#planConnect').addEventListener('click', () => doConnect(false));
+    $('#btnWritePlan').addEventListener('click', () => {
+      const plan = planFromForm(); savePlan(plan);
+      let pc; try { pc = planChannels(plan); } catch (e) { alert(errText(e)); return; }
+      if (pc.errs.length) { alert(pc.errs.join('\n')); return; }
+      const lines = pc.list.map((c) => String(c.n).padStart(3, '0') + '  ' + C.mhz(c.rx) + '  ' + (c.name || '') + (c.rxTone ? '  тон ' + C.toneText(c.rxTone) : ''));
+      if (!confirm('Записати в підключену рацію?\n\n' + lines.join('\n') + '\n\nЦі канали буде замінено, решта каналів і налаштувань лишиться як є.' + (plan.alarmToAir ? '\nТривога SOS: сирена в ефір.' : ''))) return;
+      doWrite((img) => applyPlan(img, plan), 'набір каналів');
+    });
     $('#btnCopyLog').addEventListener('click', async () => {
       const text = logLines.join('\n') + '\n\n' + navigator.userAgent;
       try { await navigator.clipboard.writeText(text); $('#btnCopyLog').textContent = 'Скопійовано'; }

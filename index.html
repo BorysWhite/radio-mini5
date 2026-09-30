@@ -109,19 +109,33 @@ summary{cursor:pointer;color:var(--muted);font-size:14px;padding:6px 0}
 /* Вкладки: знизу на телефоні */
 nav.tabs{position:fixed;left:0;right:0;bottom:0;display:flex;background:var(--surface);border-top:1px solid var(--line);
   padding-bottom:env(safe-area-inset-bottom);z-index:5}
-.tab{flex:1;background:none;color:var(--muted);border-radius:0;padding:10px 4px;min-height:56px;font-size:14px}
+.tab{flex:1;background:none;color:var(--muted);border-radius:0;padding:10px 2px;min-height:56px;font-size:13px}
 .tab[aria-selected="true"]{color:var(--ink);font-weight:600;box-shadow:inset 0 3px 0 var(--ink)}
 @media (min-width:760px){
   body{padding-bottom:env(safe-area-inset-bottom)}
   nav.tabs{position:sticky;top:0;bottom:auto;max-width:720px;margin:0 auto;border:1px solid var(--line);border-top:0;border-radius:0 0 var(--radius-l) var(--radius-l)}
   .tab[aria-selected="true"]{box-shadow:inset 0 -3px 0 var(--ink)}
 }
+
+.prow{display:flex;gap:12px;background:var(--surface);border:1px solid var(--line);border-radius:var(--radius-l);padding:12px 14px;margin:10px 0}
+.pnum{font-variant-numeric:tabular-nums;font-weight:600;color:var(--muted);padding-top:30px;min-width:30px}
+.pfields{flex:1;min-width:0}
+.pgrid{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+.pgrid label{margin:6px 0 2px}
+.pgrid label input,.pgrid label select{margin-top:4px}
+label.chk{display:flex;gap:8px;align-items:center;margin-top:28px}
+label.chk input{width:22px;height:22px;min-height:0;flex:none}
+.prow button{margin-top:10px}
+#wbar{height:100%;width:0;background:var(--tx);transition:width .2s}
+#wpct{font-size:14px;color:var(--muted);margin-top:4px;font-variant-numeric:tabular-nums}
+#btnWritePlan{margin-top:8px}
 [hidden]{display:none !important}
 </style>
 </head>
 <body>
 <nav class="tabs" role="tablist">
   <button class="tab" role="tab" data-tab="radio">Рація</button>
+  <button class="tab" role="tab" data-tab="plan">Набір</button>
   <button class="tab" role="tab" data-tab="channels">Канали</button>
   <button class="tab" role="tab" data-tab="compare">Порівняти</button>
   <button class="tab" role="tab" data-tab="help">Довідка</button>
@@ -157,7 +171,7 @@ nav.tabs{position:fixed;left:0;right:0;bottom:0;display:flex;background:var(--su
     </div>
 
     <div class="card" id="readBox" hidden>
-      <label for="label">Як назвати це зчитування</label>
+      <label for="label">Яка це рація</label>
       <input id="label" placeholder="Наприклад: Рація 1 (синя наліпка)" autocomplete="off">
       <div style="margin-top:12px"><button class="big" id="btnRead">Зчитати канали з рації</button></div>
       <div id="progress" hidden><div class="track"><div id="bar"></div></div><div id="pct"></div></div>
@@ -176,6 +190,30 @@ nav.tabs{position:fixed;left:0;right:0;bottom:0;display:flex;background:var(--su
       <pre id="log"></pre>
       <button class="ghost" id="btnCopyLog">Скопіювати журнал</button>
     </details>
+  </section>
+
+
+  <!-- Набір -->
+  <section class="panel" id="p-plan" hidden>
+    <div class="card">
+      <p>Один набір каналів для обох рацій. Записуєте по черзі: підключили першу, записали, потім другу.</p>
+      <p class="note">Змінюються лише канали з цього списку. Решта каналів і налаштувань рації лишаються. Перед кожним записом програма зберігає резервну копію рації.</p>
+      <label for="planStart">Записувати з каналу номер</label>
+      <input id="planStart" type="number" min="1" max="999" inputmode="numeric">
+    </div>
+    <div id="planRows"></div>
+    <div class="row" style="margin:4px 0 12px"><button class="ghost" id="planAdd">Додати канал</button><button class="ghost" id="planReset">Початковий приклад</button></div>
+    <div class="card">
+      <label class="chk" style="color:var(--ink);font-size:16px"><input type="checkbox" id="planAlarm"> Тривога SOS передає сирену в ефір (друга рація її почує на тому ж каналі)</label>
+      <p class="note">Бокову кнопку для SOS призначте на самій рації: <kbd>MENU</kbd> <kbd>2</kbd> <kbd>MENU</kbd> <kbd>2</kbd><kbd>6</kbd> <kbd>MENU</kbd>, оберіть SOS.</p>
+    </div>
+    <pre class="card warn" id="planErr" hidden style="white-space:pre-wrap;font:inherit;font-size:14px"></pre>
+    <div class="card">
+      <p id="planConn" class="note"></p>
+      <button class="big" id="planConnect">Підключити рацію</button>
+      <button class="big" id="btnWritePlan">Записати набір у рацію</button>
+      <div id="wprogress" hidden style="margin-top:12px"><div class="track"><div id="wbar"></div></div><div id="wpct"></div></div>
+    </div>
   </section>
 
   <!-- Канали -->
@@ -212,9 +250,13 @@ nav.tabs{position:fixed;left:0;right:0;bottom:0;display:flex;background:var(--su
     <div class="card">
       <h2 style="margin-top:4px">Що вміє програма зараз</h2>
       <p>Зчитує всі канали з рації по Bluetooth, зберігає копію в телефоні, показує канали з тонами, потужністю і смугою, порівнює дві рації між собою, зберігає файл для CHIRP і таблицю CSV.</p>
-      <p>Запис у рацію буде в наступній версії, після перевірки зчитування на ваших раціях.</p>
+      <p>Записує в рацію набір каналів (вкладка «Набір») або повну збережену копію. Перед кожним записом зберігає резервну копію.</p>
       <h2>Де працює</h2>
       <p>iPhone: лише в браузері <b>Bluefy</b>. Android, Mac, Windows: Chrome або Edge.</p>
+      <h2>Екстрений зв'язок</h2>
+      <p>Рації потрібні для зв'язку між собою. Офіційного каналу, який слухають рятувальники, для таких рацій немає: у біді телефонуйте 112 або 101.</p>
+      <p class="note">У прикладі набору є PMR 1 і PMR 8 без тону: на них вас почують будь-які сусідні рації PMR, а PMR 8 у Європі за звичаєм вважають каналом виклику допомоги. На каналах «NASH» з тоном ви чутимете лише одне одного.</p>
+      <p class="note">SOS: бокова кнопка SK1 (призначте SOS у меню 2-26). Коли тривога передає сирену в ефір, друга рація почує її на тому самому каналі.</p>
       <h2>Корисні пункти меню MINI-5</h2>
       <p class="note">2-17 режим тривоги, 2-18 звук тривоги, 2-26 функція бокової кнопки, 3-6 і 3-8 тони CTCSS, 4 Wireless CPS, 5 версія прошивки.</p>
       <h2>Важливо</h2>
@@ -224,8 +266,8 @@ nav.tabs{position:fixed;left:0;right:0;bottom:0;display:flex;background:var(--su
   </section>
 </div>
 
-<script>window.APP_VERSION = '1.0.3';</script>
-<script src="radio-core.js?v=1.0.3"></script>
-<script src="app.js?v=1.0.3"></script>
+<script>window.APP_VERSION = '2.0.0';</script>
+<script src="radio-core.js?v=2.0.0"></script>
+<script src="app.js?v=2.0.0"></script>
 </body>
 </html>

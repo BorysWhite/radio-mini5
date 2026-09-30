@@ -176,16 +176,13 @@
     return bytes.slice(0, MEM_TOTAL);
   }
 
-  // ---------- Зчитування з рації ----------
-  // link: { write(Uint8Array), read(n, timeoutMs) -> Uint8Array, clear() }
-  async function download(link, opts) {
-    opts = opts || {};
-    const log = opts.log || function () {};
-    const progress = opts.progress || function () {};
-    const hex = (a) => Array.from(a, (x) => x.toString(16).padStart(2, '0')).join(' ');
-    const ascii = (a) => Array.from(a, (x) => (x >= 0x20 && x < 0x7f ? String.fromCharCode(x) : '.')).join('');
 
-    const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+  const hex = (a) => Array.from(a, (x) => x.toString(16).padStart(2, '0')).join(' ');
+  const ascii = (a) => Array.from(a, (x) => (x >= 0x20 && x < 0x7f ? String.fromCharCode(x) : '.')).join('');
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+  // Вхід у режим програмування: пароль, підтвердження 06, службові запити F, M, SEND
+  async function enterProgramMode(link, log) {
     const take = () => (link.takeAll ? link.takeAll() : (link.clear(), new Uint8Array(0)));
     let entered = false;
     const answers = [];
@@ -218,8 +215,23 @@
       info[m.key] = r;
       log('← ' + m.key + ': ' + hex(r) + (m.key === 'M' ? '  «' + ascii(r) + '»' : ''));
     }
-    const modelStr = ascii(info.M || []).trim();
+    return info;
+  }
 
+  // ---------- Зчитування з рації ----------
+  // link: { write(Uint8Array), read(n, timeoutMs) -> Uint8Array, clear() }
+  async function download(link, opts) {
+    opts = opts || {};
+    const log = opts.log || function () {};
+    const info = await enterProgramMode(link, log);
+    const img = await readBlocks(link, opts);
+    return { img, model: ascii(info.M || []).trim(), fw: hex(info.F || []) };
+  }
+
+  // Читання всієї пам'яті (рація вже в режимі програмування)
+  async function readBlocks(link, opts) {
+    const log = opts.log || function () {};
+    const progress = opts.progress || function () {};
     const img = new Uint8Array(MEM_TOTAL);
     let pos = 0, done = 0;
     const t0 = Date.now();
@@ -231,7 +243,7 @@
           try {
             if (attempt > 0) {
               log('↻ повтор блоку 0x' + addr.toString(16).padStart(4, '0'));
-              await new Promise((r) => setTimeout(r, 300));
+              await sleep(300);
               link.clear();
             }
             await link.write(frame);
@@ -253,11 +265,109 @@
       }
     }
     log('✓ зчитано ' + pos + ' байт за ' + ((Date.now() - t0) / 1000).toFixed(1) + ' с');
-    return { img, model: modelStr, fw: hex(info.F || []) };
+    return img;
+  }
+
+  // ---------- Запис у рацію ----------
+  // Як у CHIRP для Bluetooth: блоки по 0x80, неповний блок доповнюється 0xFF,
+  // на кожен блок рація відповідає 06. Після запису рація перезапускається.
+  const WBLOCK = 0x80;
+  const TOTAL_WBLOCKS = REGIONS.reduce((n, [, size]) => n + Math.ceil(size / WBLOCK), 0);
+
+  async function writeBlocks(link, img, opts) {
+    const log = opts.log || function () {};
+    const progress = opts.progress || function () {};
+    if (!img || img.length < MEM_TOTAL) throw new Error('Немає повного образу пам\'яті для запису.');
+    let src = 0, done = 0;
+    const t0 = Date.now();
+    for (const [start, size] of REGIONS) {
+      for (let addr = start; addr < start + size; addr += WBLOCK) {
+        const cnt = Math.min(WBLOCK, start + size - addr);
+        const data = new Uint8Array(WBLOCK).fill(0xff);
+        data.set(img.subarray(src, src + cnt));
+        src += cnt;
+        const frame = new Uint8Array(4 + WBLOCK);
+        frame.set([0x57, (addr >> 8) & 0xff, addr & 0xff, WBLOCK]);
+        frame.set(crypt(data), 4);
+        await link.write(frame);
+        let ack;
+        try { ack = await link.read(1, 4000); } catch (e) {
+          throw new Error('Рація не підтвердила запис блоку 0x' + addr.toString(16) + ' (' + e.message + ').');
+        }
+        if (ack[0] !== 0x06) throw new Error('Рація відхилила блок 0x' + addr.toString(16) + ': ' + hex(ack));
+        done++;
+        progress(done, TOTAL_WBLOCKS, Date.now() - t0);
+      }
+    }
+    log('✓ записано ' + done + ' блоків за ' + ((Date.now() - t0) / 1000).toFixed(1) + ' с');
+  }
+
+  // ---------- Кодування каналів (як CHIRP set_memory) ----------
+  function lbcdPut(b, off, hz) {
+    let v = Math.round(hz / 10);
+    for (let i = 0; i < 4; i++) {
+      const two = v % 100; v = Math.floor(v / 100);
+      b[off + i] = ((Math.floor(two / 10)) << 4) | (two % 10);
+    }
+  }
+
+  function encodeTone(t) {
+    if (!t) return 0;
+    if (t.type === 'CTCSS') return Math.round(t.value * 10);
+    if (t.type === 'DCS') {
+      const idx = DCS.indexOf(t.value);
+      if (idx < 0) throw new Error('Невідомий код DCS ' + t.value);
+      return t.pol === 'I' ? idx + 1 + 0x69 : idx + 1;
+    }
+    return 0;
+  }
+
+  function parseTone(text) {
+    const s = String(text || '').trim().toUpperCase();
+    if (!s) return null;
+    let m = s.match(/^D(\d{3})([NI])$/);
+    if (m) return { type: 'DCS', value: parseInt(m[1], 10), pol: m[2] };
+    const v = parseFloat(s);
+    if (!isNaN(v)) return { type: 'CTCSS', value: v };
+    throw new Error('Не розумію тон «' + text + '»');
+  }
+
+  // ch: { name, rx (Гц), tx (Гц або null), txTone, rxTone, power 'High'|'Low', mode 'FM'|'NFM'|'AM', scan }
+  function encodeChannel(img, n, ch) {
+    const o = (n - 1) * CH_SIZE;
+    const raw = new Uint8Array(CH_SIZE);
+    if (!ch) { raw.fill(0xff); img.set(raw, o); return; }
+    raw.fill(0x00, 0, 16); raw.fill(0xff, 16, 32);
+    lbcdPut(raw, 0, ch.rx);
+    if (ch.tx === null || ch.tx === undefined) raw.fill(0xff, 4, 8); else lbcdPut(raw, 4, ch.tx);
+    const rt = encodeTone(ch.rxTone), tt = encodeTone(ch.txTone);
+    raw[8] = rt & 0xff; raw[9] = rt >> 8; raw[10] = tt & 0xff; raw[11] = tt >> 8;
+    raw[14] = ch.power === 'Low' ? 1 : 0;
+    raw[15] = (ch.mode === 'NFM' ? 0x40 : 0) | (ch.scan === false ? 0 : 0x04);
+    const name = String(ch.name || '').slice(0, 12);
+    for (let i = 0; i < name.length; i++) raw[20 + i] = name.charCodeAt(i) & 0x7f;
+    img.set(raw, o);
+  }
+
+  // Налаштування (зсуви в образі, як у CHIRP)
+  const SET = { squelch: 0x8040, dualWatch: 0x8044, alarmMode: 0x8051, alarmTone: 0x8052, sk1: 0x8072 };
+  const ALARM_MODES = ['лише гучна сирена на рації', 'сирена передається в ефір', 'в ефір передається код'];
+  function readSettings(img) {
+    const sk = { 0x07: 'FM-радіо', 0x1c: 'сканування', 0x1d: 'пошук частоти' };
+    return {
+      alarmMode: img[SET.alarmMode],
+      alarmModeText: ALARM_MODES[img[SET.alarmMode]] || ('код ' + img[SET.alarmMode]),
+      alarmTone: !!img[SET.alarmTone],
+      sk1: img[SET.sk1],
+      sk1Text: sk[img[SET.sk1]] || ('інше, код 0x' + img[SET.sk1].toString(16)),
+      squelch: img[SET.squelch],
+      dualWatch: !!img[SET.dualWatch]
+    };
   }
 
   const api = {
-    download, decodeImage, decodeChannel, decodeTone, toneText, crypt, mhz,
+    download, enterProgramMode, readBlocks, writeBlocks, encodeChannel, encodeTone, parseTone, readSettings, SET,
+    TOTAL_WBLOCKS, CH_SIZE, DCS, decodeImage, decodeChannel, decodeTone, toneText, crypt, mhz,
     toChirpImg, fromChirpImg, MEM_TOTAL, TOTAL_BLOCKS, REGIONS, BLOCK, IDENT, MAGICS
   };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;

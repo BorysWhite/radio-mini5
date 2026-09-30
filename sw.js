@@ -1,5 +1,5 @@
 // Версію змінювати при кожному оновленні, інакше телефон покаже стару програму
-const VERSION = 'mini5-1.0.3';
+const VERSION = 'mini5-2.0.0';
 const FILES = ['./', 'index.html', 'app.js', 'radio-core.js', 'manifest.webmanifest', 'icon-180.png', 'icon-192.png', 'icon-512.png'];
 self.addEventListener('install', (e) => {
   e.waitUntil(caches.open(VERSION).then((c) => c.addAll(FILES)).then(() => self.skipWaiting()));
