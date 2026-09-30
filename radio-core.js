@@ -11,6 +11,8 @@
 
   // Послідовність входу в режим програмування (як у CHIRP)
   const IDENT = enc('PROGRAMCOLORPROU');
+  // Запасний варіант, яким CHIRP входить у споріднену UV-5G Mini з прошивкою V0.05
+  const IDENTS = [IDENT, enc('PROGRAMGMRS5RMIU')];
   const MAGICS = [
     { cmd: [0x46], len: 16, key: 'F' },
     { cmd: [0x4d], len: 15, key: 'M' },
@@ -183,15 +185,31 @@
     const hex = (a) => Array.from(a, (x) => x.toString(16).padStart(2, '0')).join(' ');
     const ascii = (a) => Array.from(a, (x) => (x >= 0x20 && x < 0x7f ? String.fromCharCode(x) : '.')).join('');
 
-    link.clear();
-    log('→ вхід у режим програмування');
-    await link.write(IDENT);
-    let ack;
-    try { ack = await link.read(1, 3000); } catch (e) {
-      throw new Error('Рація не відповіла. Перевірте, що на рації увімкнено Wireless CPS (MENU → 4 → ON), і спробуйте ще раз.');
+    const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+    const take = () => (link.takeAll ? link.takeAll() : (link.clear(), new Uint8Array(0)));
+    let entered = false;
+    const answers = [];
+    for (let attempt = 0; attempt < 3 && !entered; attempt++) {
+      for (const id of IDENTS) {
+        await sleep(attempt ? 700 : 300);
+        const junk = take();
+        if (junk.length) log('відкинуто зайве від рації: ' + hex(junk));
+        log('→ вхід у режим програмування (' + ascii(id) + ', спроба ' + (attempt + 1) + ')');
+        await link.write(id);
+        let r;
+        try { r = await link.read(1, 2500); } catch (e) { log('← тиша'); answers.push('тиша'); continue; }
+        if (r[0] === 0x06) { log('← підтвердження 06'); entered = true; break; }
+        await sleep(400);
+        const extra = take();
+        const all = hex(r) + (extra.length ? ' ' + hex(extra) : '');
+        log('← несподівано: ' + all + '  «' + ascii(r) + ascii(extra) + '»');
+        answers.push(all);
+      }
     }
-    if (ack[0] !== 0x06) throw new Error('Несподівана відповідь рації: ' + hex(ack));
-    log('← підтвердження 06');
+    if (!entered) {
+      throw new Error('Рація не входить у режим програмування (відповіді: ' + answers.join('; ') + '). ' +
+        'Закрийте OLA Radio і від\'єднайте рацію від інших пристроїв, вимкніть і ввімкніть рацію, знову MENU → 4 → ON, і повторіть.');
+    }
 
     const info = {};
     for (const m of MAGICS) {

@@ -27,6 +27,7 @@
         const dv = e.target.value;
         const v = new Uint8Array(dv.buffer, dv.byteOffset, dv.byteLength);
         for (const b of v) this.buf.push(b);
+        if (this.rawLog < 12) { this.rawLog++; log('  сирі дані: ' + Array.from(v, (x) => x.toString(16).padStart(2, '0')).join(' ')); }
         for (const w of this.waiters.slice()) w();
       };
     }
@@ -43,7 +44,7 @@
       });
       // Після повторного підключення старий обробник даних прибираємо, інакше байти дублюються
       if (this.rxChar) { try { this.rxChar.removeEventListener('characteristicvaluechanged', this._onData); } catch (e) { /* ignore */ } }
-      this.rxChar = null; this.txChar = null; this.small = false; this.buf = [];
+      this.rxChar = null; this.txChar = null; this.small = false; this.buf = []; this.rawLog = 0;
       const server = await this.device.gatt.connect();
       let service = null;
       for (const s of [SVC].concat(OTHER_SVCS)) {
@@ -51,12 +52,19 @@
       }
       if (!service) throw new Error('На цьому пристрої немає сервісу для програмування. Можливо, обрано не рацію.');
       const chars = await service.getCharacteristics();
+      // Спершу беремо відому характеристику рації FFE1, інші лише як запасний варіант
+      const main = chars.find((c) => c.uuid.startsWith('0000ffe1'));
       for (const c of chars) {
         const p = c.properties;
         log('Характеристика ' + c.uuid + ': ' + ['read', 'write', 'writeWithoutResponse', 'notify', 'indicate'].filter((k) => p[k]).join(', '));
+      }
+      const ordered = main ? [main].concat(chars.filter((c) => c !== main)) : chars;
+      for (const c of ordered) {
+        const p = c.properties;
         if (!this.rxChar && (p.notify || p.indicate)) this.rxChar = c;
         if (!this.txChar && (p.writeWithoutResponse || p.write)) this.txChar = c;
       }
+      log('Прийом: ' + this.rxChar.uuid.slice(4, 8) + ', передача: ' + this.txChar.uuid.slice(4, 8));
       if (!this.rxChar || !this.txChar) throw new Error('Не знайдено канал обміну з рацією.');
       this.rxChar.addEventListener('characteristicvaluechanged', this._onData);
       await this.rxChar.startNotifications();
@@ -68,6 +76,8 @@
     disconnect() { try { if (this.connected) this.device.gatt.disconnect(); } catch (e) { /* ignore */ } }
 
     clear() { this.buf = []; }
+
+    takeAll() { const b = Uint8Array.from(this.buf); this.buf = []; return b; }
 
     async _send(chunk) {
       const c = this.txChar;
