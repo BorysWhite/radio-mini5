@@ -1,0 +1,230 @@
+<!doctype html>
+<html lang="uk">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Мої рації MINI-5</title>
+<meta name="theme-color" content="#1c2a35">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icon-192.png">
+<link rel="apple-touch-icon" href="icon-180.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Рації">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<style>
+:root{
+  --paper:#e6ebee; --surface:#ffffff; --ink:#15212a; --muted:#5b6a75; --line:#ccd5db;
+  --lcd:#1c2a35; --lcd-text:#dff3ff; --lcd-dim:#8fb0c4;
+  --rx:#1d8248; --tx:#b8352a; --busy:#c98a12; --btn:#1c2a35; --btn-text:#fff;
+  --radius-s:6px; --radius-l:14px;
+  color-scheme:light dark;
+}
+@media (prefers-color-scheme:dark){
+  :root{ --paper:#0e151a; --surface:#172129; --ink:#e3eaef; --muted:#93a3ae; --line:#2a3842;
+    --lcd:#070d11; --btn:#dfe8ee; --btn-text:#0e151a; --rx:#37b56b; --tx:#e0584b; }
+}
+*{box-sizing:border-box}
+html,body{margin:0;background:var(--paper);color:var(--ink)}
+body{font:16px/1.45 -apple-system,BlinkMacSystemFont,"SF Pro Text","Segoe UI",Roboto,sans-serif;
+  padding:env(safe-area-inset-top) env(safe-area-inset-right) calc(76px + env(safe-area-inset-bottom)) env(safe-area-inset-left);
+  -webkit-text-size-adjust:100%}
+.wrap{max-width:720px;margin:0 auto;padding:12px 16px 24px}
+
+/* Дисплей у стилі екрана рації: головний візуальний елемент */
+#lcd{background:var(--lcd);color:var(--lcd-text);border-radius:var(--radius-l);padding:14px 16px 12px;
+  box-shadow:inset 0 0 0 3px #0003, inset 0 10px 22px #0006;position:relative;margin-bottom:16px}
+#lcd::before{content:"";position:absolute;right:16px;top:16px;width:10px;height:10px;border-radius:50%;
+  background:#44525c;box-shadow:0 0 0 2px #0005}
+#lcd[data-mode="rx"]::before{background:#39d27a;box-shadow:0 0 10px #39d27a}
+#lcd[data-mode="tx"]::before{background:#ff5a4a;box-shadow:0 0 10px #ff5a4a}
+#lcd[data-mode="busy"]::before{background:#ffc23d;box-shadow:0 0 10px #ffc23d;animation:blink 1s steps(2) infinite}
+@keyframes blink{50%{opacity:.25}}
+@media (prefers-reduced-motion:reduce){#lcd[data-mode="busy"]::before{animation:none}}
+#lcdA{font-size:21px;font-weight:600;letter-spacing:.01em;padding-right:24px;font-variant-numeric:tabular-nums}
+#lcdB{font-size:14px;color:var(--lcd-dim);margin-top:2px;font-variant-numeric:tabular-nums}
+
+h1{font-size:15px;font-weight:600;color:var(--muted);margin:4px 2px 10px}
+h2{font-size:19px;margin:22px 0 8px}
+p{margin:8px 0}
+.card{background:var(--surface);border-radius:var(--radius-l);padding:14px 16px;margin:12px 0;border:1px solid var(--line)}
+.note{font-size:14px;color:var(--muted)}
+.warn{border-color:var(--tx)}
+.warn b{color:var(--tx)}
+ol.steps{margin:6px 0 0;padding-left:22px}
+ol.steps li{margin:4px 0}
+kbd{font-family:inherit;font-weight:600;font-size:13px;line-height:1;border:1px solid var(--line);border-bottom-width:2px;border-radius:4px;padding:2px 5px;background:var(--paper)}
+
+button{font:inherit;font-size:16px;border:0;border-radius:var(--radius-s);padding:12px 18px;cursor:pointer;
+  background:var(--btn);color:var(--btn-text);min-height:46px}
+button.big{width:100%;font-weight:600;font-size:17px}
+button.ghost{background:transparent;color:var(--ink);border:1px solid var(--line);padding:8px 12px;min-height:38px;font-size:14px}
+button.ghost.danger{color:var(--tx)}
+button:disabled{opacity:.4;cursor:default}
+button:focus-visible,a:focus-visible,select:focus-visible,input:focus-visible{outline:3px solid #3d8fd1;outline-offset:2px}
+a{color:inherit}
+.row{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+.row > *{flex:1 1 auto}
+input,select{font:inherit;font-size:16px;width:100%;padding:10px 12px;border:1px solid var(--line);border-radius:var(--radius-s);
+  background:var(--surface);color:var(--ink);min-height:44px}
+label{display:block;font-size:14px;color:var(--muted);margin:10px 0 4px}
+.link{display:inline-block;margin-top:10px;font-size:14px;color:var(--muted)}
+
+#progress{margin-top:12px}
+.track{height:8px;background:var(--line);border-radius:4px;overflow:hidden}
+#bar{height:100%;width:0;background:var(--busy);transition:width .2s}
+#pct{font-size:14px;color:var(--muted);margin-top:4px;font-variant-numeric:tabular-nums}
+
+/* Канали */
+.chs{list-style:none;margin:0;padding:0}
+.ch{display:flex;gap:12px;padding:10px 2px;border-bottom:1px solid var(--line)}
+.ch:last-child{border-bottom:0}
+.num{font-variant-numeric:tabular-nums;color:var(--muted);font-size:14px;padding-top:4px;min-width:30px}
+.main{display:flex;flex-direction:column;min-width:0}
+.freq{font-size:20px;font-weight:600;font-variant-numeric:tabular-nums;letter-spacing:.01em}
+.freq small{font-size:12px;font-weight:500;color:var(--muted);margin-left:4px}
+.name{font-weight:600;font-size:15px}
+.meta{font-size:14px;color:var(--muted)}
+.empty{color:var(--muted);text-align:center;padding:18px 8px}
+#chCount{font-size:14px;color:var(--muted)}
+
+.diff{background:var(--surface);border:1px solid var(--line);border-radius:var(--radius-l);padding:10px 14px;margin:10px 0}
+.dn{font-weight:600;margin-bottom:4px}
+.dc{border-top:1px dashed var(--line);padding-top:6px;margin-top:6px}
+.who{font-size:13px;color:var(--muted)}
+.none{color:var(--muted);margin:4px 0 8px}
+.summary{font-size:15px}
+
+#saved{list-style:none;margin:0;padding:0}
+#saved li{display:flex;justify-content:space-between;gap:10px;align-items:center;padding:10px 0;border-bottom:1px solid var(--line)}
+#saved li:last-child{border-bottom:0}
+#saved small{color:var(--muted)}
+.row-btns{display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end}
+
+details{margin-top:12px}
+summary{cursor:pointer;color:var(--muted);font-size:14px;padding:6px 0}
+#log{font:12px/1.4 ui-monospace,Menlo,monospace;white-space:pre-wrap;word-break:break-all;background:var(--paper);
+  border-radius:var(--radius-s);padding:10px;max-height:260px;overflow:auto;margin:6px 0}
+
+/* Вкладки: знизу на телефоні */
+nav.tabs{position:fixed;left:0;right:0;bottom:0;display:flex;background:var(--surface);border-top:1px solid var(--line);
+  padding-bottom:env(safe-area-inset-bottom);z-index:5}
+.tab{flex:1;background:none;color:var(--muted);border-radius:0;padding:10px 4px;min-height:56px;font-size:14px}
+.tab[aria-selected="true"]{color:var(--ink);font-weight:600;box-shadow:inset 0 3px 0 var(--ink)}
+@media (min-width:760px){
+  body{padding-bottom:env(safe-area-inset-bottom)}
+  nav.tabs{position:sticky;top:0;bottom:auto;max-width:720px;margin:0 auto;border:1px solid var(--line);border-top:0;border-radius:0 0 var(--radius-l) var(--radius-l)}
+  .tab[aria-selected="true"]{box-shadow:inset 0 -3px 0 var(--ink)}
+}
+[hidden]{display:none !important}
+</style>
+</head>
+<body>
+<nav class="tabs" role="tablist">
+  <button class="tab" role="tab" data-tab="radio">Рація</button>
+  <button class="tab" role="tab" data-tab="channels">Канали</button>
+  <button class="tab" role="tab" data-tab="compare">Порівняти</button>
+  <button class="tab" role="tab" data-tab="help">Довідка</button>
+</nav>
+
+<div class="wrap">
+  <h1>Мої рації MINI-5</h1>
+  <div id="lcd" aria-live="polite"><div id="lcdA">Рацію не підключено</div><div id="lcdB">&nbsp;</div></div>
+
+  <!-- Рація -->
+  <section class="panel" id="p-radio">
+    <div class="card warn" id="noBt" hidden>
+      <p><b>Цей браузер не працює з Bluetooth.</b></p>
+      <p>На iPhone встановіть безкоштовний браузер <b>Bluefy</b> з App Store і відкрийте цю сторінку в ньому. Safari і Chrome на iPhone з рацією не з'єднуються.</p>
+      <p class="note">На Android і на комп'ютері підійде Chrome або Edge.</p>
+    </div>
+    <div class="card warn" id="btOff" hidden><p><b>Bluetooth вимкнено.</b> Увімкніть його в налаштуваннях телефону.</p></div>
+
+    <div class="card">
+      <p><b>Перед підключенням</b> на рації:</p>
+      <ol class="steps">
+        <li>Натисніть <kbd>MENU</kbd>, потім <kbd>4</kbd> (Wireless CPS), <kbd>MENU</kbd>.</li>
+        <li>Оберіть <b>ON</b> і натисніть <kbd>MENU</kbd>. Угорі екрана з'явиться значок Bluetooth.</li>
+        <li>Тримайте поруч з телефоном лише одну рацію з увімкненим Wireless CPS.</li>
+      </ol>
+      <p class="note">Не додавайте рацію в налаштуваннях Bluetooth телефону: підключення робить сама програма.</p>
+      <div style="margin-top:12px">
+        <button class="big" id="btnConnect">Підключити рацію</button>
+        <a href="#" class="link" id="linkAll">Рації немає в списку? Показати всі пристрої</a>
+        <button class="ghost" id="btnDisconnect" hidden>Від'єднати</button>
+      </div>
+    </div>
+
+    <div class="card" id="readBox" hidden>
+      <label for="label">Як назвати це зчитування</label>
+      <input id="label" placeholder="Наприклад: Рація 1 (синя наліпка)" autocomplete="off">
+      <div style="margin-top:12px"><button class="big" id="btnRead">Зчитати канали з рації</button></div>
+      <div id="progress" hidden><div class="track"><div id="bar"></div></div><div id="pct"></div></div>
+      <p class="note">Програма лише читає пам'ять рації і нічого в ній не змінює. Зчитування триває приблизно пів хвилини.</p>
+      <div id="afterRead" hidden>
+        <p class="note">Якщо після зчитування рація не повернулася до звичайного екрана, вимкніть і ввімкніть її.</p>
+        <button class="ghost" id="goChannels">Переглянути канали</button>
+      </div>
+    </div>
+
+    <h2>Збережені зчитування</h2>
+    <div class="card"><ul id="saved"></ul></div>
+
+    <details>
+      <summary>Журнал обміну з рацією</summary>
+      <pre id="log"></pre>
+      <button class="ghost" id="btnCopyLog">Скопіювати журнал</button>
+    </details>
+  </section>
+
+  <!-- Канали -->
+  <section class="panel" id="p-channels" hidden>
+    <div class="card">
+      <label for="selImage">Зчитування</label>
+      <select id="selImage"></select>
+      <div id="chTools">
+        <label for="chSearch">Пошук за назвою, частотою або номером</label>
+        <input id="chSearch" type="search" inputmode="search" placeholder="446.006 або PMR">
+        <div class="row" style="margin-top:12px">
+          <button class="ghost" id="btnImg">Файл для CHIRP</button>
+          <button class="ghost" id="btnCsv">Таблиця (CSV)</button>
+        </div>
+      </div>
+      <div class="row" style="margin-top:8px"><button class="ghost" id="btnOpen">Відкрити файл CHIRP (.img)</button></div>
+      <input type="file" id="fileIn" accept=".img,application/octet-stream" hidden>
+      <p id="chCount"></p>
+    </div>
+    <div class="card" id="chList"></div>
+  </section>
+
+  <!-- Порівняння -->
+  <section class="panel" id="p-compare" hidden>
+    <div class="card">
+      <label for="cmpA">Перше зчитування</label><select id="cmpA"></select>
+      <label for="cmpB">Друге зчитування</label><select id="cmpB"></select>
+    </div>
+    <div id="cmpOut"></div>
+  </section>
+
+  <!-- Довідка -->
+  <section class="panel" id="p-help" hidden>
+    <div class="card">
+      <h2 style="margin-top:4px">Що вміє програма зараз</h2>
+      <p>Зчитує всі канали з рації по Bluetooth, зберігає копію в телефоні, показує канали з тонами, потужністю і смугою, порівнює дві рації між собою, зберігає файл для CHIRP і таблицю CSV.</p>
+      <p>Запис у рацію буде в наступній версії, після перевірки зчитування на ваших раціях.</p>
+      <h2>Де працює</h2>
+      <p>iPhone: лише в браузері <b>Bluefy</b>. Android, Mac, Windows: Chrome або Edge.</p>
+      <h2>Корисні пункти меню MINI-5</h2>
+      <p class="note">2-17 режим тривоги, 2-18 звук тривоги, 2-26 функція бокової кнопки, 3-6 і 3-8 тони CTCSS, 4 Wireless CPS, 5 версія прошивки.</p>
+      <h2>Важливо</h2>
+      <p class="note">Передача на MINI-5 потребує дозволу радіоаматора. Зв'язок аналоговий і не шифрований: у ефірі не називайте місць і не описуйте наслідків ударів.</p>
+      <p class="note">Протокол обміну взято з відкритої програми CHIRP (драйвер UV-5R Mini).</p>
+    </div>
+  </section>
+</div>
+
+<script>window.APP_VERSION = '1.0.0';</script>
+<script src="radio-core.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
