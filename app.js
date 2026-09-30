@@ -17,8 +17,10 @@
   }
 
   // ---------------- Bluetooth ----------------
-  const SVC = 0xffe0;
-  const OTHER_SVCS = [0xfff0, '6e400001-b5a3-f393-e0a9-e50e24dcca9e'];
+  // Повні UUID рядками: Bluefy на iPhone погано приймає короткі числові
+  const SVC = '0000ffe0-0000-1000-8000-00805f9b34fb';
+  const OTHER_SVCS = ['0000fff0-0000-1000-8000-00805f9b34fb', '6e400001-b5a3-f393-e0a9-e50e24dcca9e'];
+  const errText = (e) => (e && (e.message || e.name)) || String(e);
 
   class BleLink {
     constructor() {
@@ -35,8 +37,14 @@
     async connect(showAll) {
       const opts = showAll
         ? { acceptAllDevices: true, optionalServices: [SVC].concat(OTHER_SVCS) }
-        : { filters: [{ namePrefix: 'walkie' }, { services: [SVC] }], optionalServices: [SVC].concat(OTHER_SVCS) };
-      this.device = await navigator.bluetooth.requestDevice(opts);
+        : { filters: [{ namePrefix: 'walkie' }], optionalServices: [SVC].concat(OTHER_SVCS) };
+      try {
+        this.device = await navigator.bluetooth.requestDevice(opts);
+      } catch (e) {
+        if ((e && e.name) === 'NotFoundError' || showAll) throw e;
+        log('Пошук за назвою не спрацював (' + errText(e) + '), показую всі пристрої');
+        this.device = await navigator.bluetooth.requestDevice({ acceptAllDevices: true, optionalServices: [SVC].concat(OTHER_SVCS) });
+      }
       log('Обрано пристрій: ' + (this.device.name || 'без назви'));
       this.device.addEventListener('gattserverdisconnected', () => {
         log('Зв\'язок з рацією розірвано');
@@ -48,12 +56,12 @@
       const server = await this.device.gatt.connect();
       let service = null;
       for (const s of [SVC].concat(OTHER_SVCS)) {
-        try { service = await server.getPrimaryService(s); log('Сервіс: ' + service.uuid); break; } catch (e) { /* далі */ }
+        try { service = await server.getPrimaryService(s); log('Сервіс: ' + service.uuid); break; } catch (e) { log('Сервісу ' + s.slice(4, 8) + ' немає: ' + errText(e)); }
       }
       if (!service) throw new Error('На цьому пристрої немає сервісу для програмування. Можливо, обрано не рацію.');
       const chars = await service.getCharacteristics();
       // Спершу беремо відому характеристику рації FFE1, інші лише як запасний варіант
-      const main = chars.find((c) => c.uuid.startsWith('0000ffe1'));
+      const main = chars.find((c) => String(c.uuid).toLowerCase().indexOf('ffe1') >= 0);
       for (const c of chars) {
         const p = c.properties;
         log('Характеристика ' + c.uuid + ': ' + ['read', 'write', 'writeWithoutResponse', 'notify', 'indicate'].filter((k) => p[k]).join(', '));
@@ -64,7 +72,7 @@
         if (!this.rxChar && (p.notify || p.indicate)) this.rxChar = c;
         if (!this.txChar && (p.writeWithoutResponse || p.write)) this.txChar = c;
       }
-      log('Прийом: ' + this.rxChar.uuid.slice(4, 8) + ', передача: ' + this.txChar.uuid.slice(4, 8));
+      log('Прийом: ' + this.rxChar.uuid + ', передача: ' + this.txChar.uuid);
       if (!this.rxChar || !this.txChar) throw new Error('Не знайдено канал обміну з рацією.');
       this.rxChar.addEventListener('characteristicvaluechanged', this._onData);
       await this.rxChar.startNotifications();
@@ -298,8 +306,12 @@
       link.onDisconnect = () => refreshRadioTab();
       await link.connect(showAll);
     } catch (e) {
-      if (e.name === 'NotFoundError') log('Пошук скасовано');
-      else { log('Помилка підключення: ' + e.message); alert(e.message); }
+      if (e && e.name === 'NotFoundError') log('Пошук скасовано або рацію не знайдено');
+      else {
+        const t = errText(e) + (e && e.name ? ' [' + e.name + ']' : '');
+        log('Помилка підключення: ' + t);
+        alert('Не вдалося підключитися: ' + t + '\n\nСпробуйте посилання «Показати всі пристрої».');
+      }
     }
     refreshRadioTab();
   }
@@ -332,9 +344,9 @@
       $('#afterRead').hidden = false;
       renderSaved();
     } catch (e) {
-      log('Помилка: ' + e.message);
+      log('Помилка: ' + errText(e));
       setDisplay('Зчитування не вдалося', 'Деталі в журналі нижче', 'tx');
-      alert(e.message);
+      alert(errText(e));
     } finally {
       busy = false;
       $('#progress').hidden = true;
