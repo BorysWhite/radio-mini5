@@ -410,7 +410,12 @@
     });
 
     window.addEventListener('beforeunload', () => link.disconnect());
-    if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(() => {});
+    if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js', { updateViaCache: 'none' }).then((r) => r.update()).catch(() => {});
+    $('#ver').textContent = 'версія ' + window.APP_VERSION;
+    const ua = navigator.userAgent;
+    const br = /Bluefy/i.test(ua) ? 'Bluefy' : /CriOS/.test(ua) ? 'Chrome на iPhone' : /Edg\//.test(ua) ? 'Edge' : /Chrome\//.test(ua) ? 'Chrome' : /Safari/.test(ua) ? 'Safari' : 'невідомий браузер';
+    $('#diag').textContent = 'Браузер: ' + br + '. Bluetooth у браузері: ' + (navigator.bluetooth ? 'є' : 'немає') + '.';
+    log('Браузер: ' + ua);
 
     log('Програма запущена, версія ' + window.APP_VERSION);
     showTab('radio');

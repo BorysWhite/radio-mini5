@@ -128,7 +128,7 @@ nav.tabs{position:fixed;left:0;right:0;bottom:0;display:flex;background:var(--su
 </nav>
 
 <div class="wrap">
-  <h1>Мої рації MINI-5</h1>
+  <h1>Мої рації MINI-5 <span id="ver" style="font-weight:400"></span></h1>
   <div id="lcd" aria-live="polite"><div id="lcdA">Рацію не підключено</div><div id="lcdB">&nbsp;</div></div>
 
   <!-- Рація -->
@@ -138,6 +138,7 @@ nav.tabs{position:fixed;left:0;right:0;bottom:0;display:flex;background:var(--su
       <p>На iPhone встановіть безкоштовний браузер <b>Bluefy</b> з App Store і відкрийте цю сторінку в ньому. Safari і Chrome на iPhone з рацією не з'єднуються.</p>
       <p class="note">На Android і на комп'ютері підійде Chrome або Edge.</p>
     </div>
+    <p class="note" id="diag"></p>
     <div class="card warn" id="btOff" hidden><p><b>Bluetooth вимкнено.</b> Увімкніть його в налаштуваннях телефону.</p></div>
 
     <div class="card">
@@ -223,8 +224,8 @@ nav.tabs{position:fixed;left:0;right:0;bottom:0;display:flex;background:var(--su
   </section>
 </div>
 
-<script>window.APP_VERSION = '1.0.1';</script>
-<script src="radio-core.js"></script>
-<script src="app.js"></script>
+<script>window.APP_VERSION = '1.0.2';</script>
+<script src="radio-core.js?v=1.0.2"></script>
+<script src="app.js?v=1.0.2"></script>
 </body>
 </html>
